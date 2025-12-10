@@ -1,0 +1,570 @@
+// game-engine.js - Game Logic and Rendering
+
+// Game State
+let gameState = {
+    screen: 'character-select',
+    player: null,
+    selectedDistrict: null,
+    currentYear: 0,
+    cash: 0,
+    portfolio: [],
+    events: [],
+    yearHistory: []
+};
+
+// Utility Functions
+function formatNumber(num) {
+    return new Intl.NumberFormat('th-TH').format(Math.round(num));
+}
+
+function calculatePropertyPrice(district, archetype) {
+    return Math.round(district.avgPrice * archetype.priceMultiplier);
+}
+
+function getArchetypeData(archetypeId) {
+    return GAME_DATA.archetypes.find(a => a.id === archetypeId);
+}
+
+function getDistrictData(districtId) {
+    return GAME_DATA.districts.find(d => d.id === districtId);
+}
+
+// Game Actions
+function selectCharacter(tierId) {
+    const tier = GAME_DATA.salaryTiers.find(t => t.id === tierId);
+    gameState.player = tier;
+    gameState.cash = tier.savings;
+    gameState.screen = 'map-select';
+    render();
+}
+
+function selectDistrict(districtId) {
+    gameState.selectedDistrict = getDistrictData(districtId);
+    gameState.screen = 'property-select';
+    render();
+}
+
+function backToMap() {
+    gameState.screen = 'map-select';
+    gameState.selectedDistrict = null;
+    render();
+}
+
+function buyProperty(archetypeId) {
+    const archetype = getArchetypeData(archetypeId);
+    const price = calculatePropertyPrice(gameState.selectedDistrict, archetype);
+    const downPayment = price * 0.2;
+    
+    if (gameState.cash < downPayment) {
+        alert('เงินดาวน์ไม่พอ! ต้องมีอย่างน้อย 20% ของราคา');
+        return;
+    }
+
+    gameState.cash -= downPayment;
+    
+    const property = {
+        district: gameState.selectedDistrict,
+        archetype: archetype,
+        purchasePrice: price,
+        purchaseYear: gameState.currentYear,
+        currentValue: price,
+        totalReturn: 0
+    };
+    
+    gameState.portfolio.push(property);
+    gameState.screen = 'simulation';
+    render();
+}
+
+function simulateYear() {
+    if (gameState.currentYear >= 10) {
+        gameState.screen = 'results';
+        render();
+        return;
+    }
+
+    const newYear = gameState.currentYear + 1;
+    gameState.currentYear = newYear;
+
+    // Check for economic events
+    const yearEvent = GAME_DATA.economicEvents.find(e => e.year === newYear);
+    if (yearEvent) {
+        gameState.events.push(yearEvent);
+    }
+
+    // Update portfolio values
+    gameState.portfolio = gameState.portfolio.map(prop => {
+        let appreciation = prop.district.hpi / 100;
+        
+        // Apply economic event impact
+        if (yearEvent) {
+            const impact = yearEvent.impact[prop.archetype.id];
+            appreciation += impact;
+        }
+
+        // Apply archetype-specific volatility
+        const volatilityFactor = Math.random() * 0.05 - 0.025;
+        appreciation += volatilityFactor;
+
+        const newValue = prop.currentValue * (1 + appreciation);
+        const rentalYield = (prop.district.avgYield * prop.archetype.yieldBonus) / 100;
+        const annualRental = newValue * rentalYield;
+
+        return {
+            ...prop,
+            currentValue: newValue,
+            totalReturn: prop.totalReturn + annualRental
+        };
+    });
+
+    // Add rental income and savings to cash
+    const totalRental = gameState.portfolio.reduce((sum, p) => {
+        const rentalYield = (p.district.avgYield * p.archetype.yieldBonus) / 100;
+        return sum + (p.currentValue * rentalYield);
+    }, 0);
+    
+    gameState.cash += totalRental + (gameState.player.salary * 12 * 0.3);
+
+    // Save year history
+    gameState.yearHistory.push({
+        year: newYear,
+        portfolioValue: gameState.portfolio.reduce((sum, p) => sum + p.currentValue, 0),
+        cash: gameState.cash,
+        event: yearEvent ? yearEvent.name : null
+    });
+
+    render();
+}
+
+function resetGame() {
+    gameState = {
+        screen: 'character-select',
+        player: null,
+        selectedDistrict: null,
+        currentYear: 0,
+        cash: 0,
+        portfolio: [],
+        events: [],
+        yearHistory: []
+    };
+    render();
+}
+
+// Screen Renderers
+function renderCharacterSelect() {
+    return `
+        <div class="min-h-screen bg-gradient-to-br from-blue-900 via-purple-900 to-pink-900 p-8 fade-in">
+            <div class="max-w-6xl mx-auto">
+                <h1 class="text-5xl font-bold text-white text-center mb-4">
+                    🏢 Property Investor Simulator
+                </h1>
+                <p class="text-xl text-gray-300 text-center mb-12">
+                    เลือกตัวละครของคุณเพื่อเริ่มเส้นทางนักลงทุนอสังหา
+                </p>
+                
+                <div class="grid md:grid-cols-3 gap-6">
+                    ${GAME_DATA.salaryTiers.map(tier => `
+                        <div onclick="selectCharacter(${tier.id})" 
+                             class="bg-white/10 backdrop-blur-lg rounded-2xl p-8 cursor-pointer hover:bg-white/20 transition-all transform hover:scale-105 border-2 border-white/20">
+                            <div class="w-20 h-20 ${tier.color} rounded-full mx-auto mb-4 flex items-center justify-center text-4xl">
+                                ${tier.emoji}
+                            </div>
+                            <h3 class="text-2xl font-bold text-white text-center mb-3">${tier.name}</h3>
+                            <div class="space-y-2 text-gray-200">
+                                <div class="flex items-center justify-between">
+                                    <span>เงินเดือน:</span>
+                                    <span class="font-semibold">${formatNumber(tier.salary)} ฿</span>
+                                </div>
+                                <div class="flex items-center justify-between">
+                                    <span>เงินออม:</span>
+                                    <span class="font-semibold">${formatNumber(tier.savings)} ฿</span>
+                                </div>
+                            </div>
+                            <button class="w-full mt-6 bg-white text-purple-900 font-bold py-3 rounded-lg hover:bg-gray-100 transition-colors">
+                                เลือกตัวละครนี้
+                            </button>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function renderMapSelect() {
+    return `
+        <div class="min-h-screen bg-gradient-to-br from-slate-900 to-slate-700 p-8 fade-in">
+            <div class="max-w-7xl mx-auto">
+                <div class="bg-white/10 backdrop-blur-lg rounded-2xl p-6 mb-8">
+                    <div class="flex items-center justify-between text-white">
+                        <div>
+                            <h2 class="text-2xl font-bold">${gameState.player.name}</h2>
+                            <p class="text-gray-300">เงินทุน: ${formatNumber(gameState.cash)} ฿</p>
+                        </div>
+                        <div class="text-right">
+                            <p class="text-sm text-gray-300">ปีที่</p>
+                            <p class="text-3xl font-bold">${gameState.currentYear}</p>
+                        </div>
+                    </div>
+                </div>
+
+                <h1 class="text-4xl font-bold text-white text-center mb-2">🗺️ เลือกย่านลงทุน</h1>
+                <p class="text-gray-300 text-center mb-8">แต่ละย่านมีลักษณะและโอกาสแตกต่างกัน</p>
+
+                <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                    ${GAME_DATA.districts.map(district => `
+                        <div onclick="selectDistrict('${district.id}')" 
+                             class="bg-white rounded-2xl p-6 cursor-pointer hover:shadow-2xl transition-all transform hover:scale-105">
+                            <div class="w-full h-32 rounded-lg mb-4 flex items-center justify-center text-6xl"
+                                 style="background-color: ${district.color}">
+                                ${district.emoji}
+                            </div>
+                            
+                            <h3 class="text-2xl font-bold text-gray-800 mb-2">${district.name}</h3>
+                            <p class="text-sm text-gray-600 mb-4">${district.description}</p>
+                            
+                            <div class="space-y-3">
+                                <div class="flex items-center justify-between text-sm">
+                                    <span class="text-gray-600">ราคาเฉลี่ย:</span>
+                                    <span class="font-semibold text-gray-800">${formatNumber(district.avgPrice)} ฿/ตร.ม.</span>
+                                </div>
+                                <div class="flex items-center justify-between text-sm">
+                                    <span class="text-gray-600">HPI (5 ปี):</span>
+                                    <span class="font-semibold text-green-600">+${district.hpi}%</span>
+                                </div>
+                                <div class="flex items-center justify-between text-sm">
+                                    <span class="text-gray-600">Yield เฉลี่ย:</span>
+                                    <span class="font-semibold text-blue-600">${district.avgYield}%</span>
+                                </div>
+                            </div>
+
+                            <div class="mt-4 pt-4 border-t border-gray-200">
+                                <p class="text-xs text-gray-500 mb-2">เทรนด์ราคา 5 ปี</p>
+                                <div class="flex items-end justify-between h-16">
+                                    ${district.trend.map(value => {
+                                        const maxValue = Math.max(...district.trend);
+                                        const height = (value / maxValue) * 100;
+                                        return `<div class="w-full mx-0.5 rounded-t" style="height: ${height}%; background-color: ${district.color}"></div>`;
+                                    }).join('')}
+                                </div>
+                            </div>
+
+                            <button class="w-full mt-4 text-white font-bold py-3 rounded-lg"
+                                    style="background-color: ${district.color}">
+                                เลือกย่านนี้
+                            </button>
+                        </div>
+                    `).join('')}
+                </div>
+
+                <div class="bg-yellow-500/20 border-2 border-yellow-500 rounded-xl p-6">
+                    <h4 class="text-white font-bold mb-2">💡 คำแนะนำ:</h4>
+                    <ul class="space-y-1 text-sm text-gray-200">
+                        <li>• ราคาเฉลี่ยสูง ≠ ผลตอบแทนดีเสมอไป</li>
+                        <li>• HPI สูง = ราคาขึ้นเร็ว แต่อนาคตไม่แน่นอน</li>
+                        <li>• Yield สูง = รายได้เช่าดี แต่อาจมี Capital Gain ต่ำ</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function renderPropertySelect() {
+    const district = gameState.selectedDistrict;
+    
+    return `
+        <div class="min-h-screen bg-gradient-to-br from-slate-900 to-slate-700 p-8 fade-in">
+            <div class="max-w-7xl mx-auto">
+                <div class="bg-white/10 backdrop-blur-lg rounded-2xl p-6 mb-8">
+                    <div class="flex items-center justify-between text-white">
+                        <div>
+                            <h2 class="text-xl font-bold">${gameState.player.name}</h2>
+                            <p class="text-gray-300">เงินทุน: ${formatNumber(gameState.cash)} ฿</p>
+                        </div>
+                        <div class="text-center">
+                            <p class="text-sm text-gray-300">ย่านที่เลือก</p>
+                            <p class="text-2xl font-bold">${district.name}</p>
+                        </div>
+                        <button onclick="backToMap()" 
+                                class="bg-white/20 hover:bg-white/30 px-4 py-2 rounded-lg">
+                            ← เปลี่ยนย่าน
+                        </button>
+                    </div>
+                </div>
+
+                <h1 class="text-4xl font-bold text-white text-center mb-8">
+                    🏢 เลือกประเภทอสังหา
+                </h1>
+
+                <div class="grid md:grid-cols-3 gap-6 mb-8">
+                    ${GAME_DATA.archetypes.map(archetype => {
+                        const price = calculatePropertyPrice(district, archetype);
+                        const downPayment = price * 0.2;
+                        const canAfford = gameState.cash >= downPayment;
+                        
+                        return `
+                            <div onclick="${canAfford ? `buyProperty('${archetype.id}')` : ''}" 
+                                 class="bg-white rounded-2xl p-6 ${canAfford ? 'cursor-pointer hover:shadow-2xl transform hover:scale-105' : 'opacity-50'} transition-all">
+                                <div class="text-5xl text-center mb-4">${archetype.emoji}</div>
+                                
+                                <h3 class="text-2xl font-bold text-gray-800 mb-1 text-center">
+                                    ${archetype.name}
+                                </h3>
+                                <p class="text-sm text-gray-600 text-center mb-4">${archetype.description}</p>
+                                
+                                <div class="space-y-3 mb-4">
+                                    <div class="flex justify-between text-sm">
+                                        <span class="text-gray-600">ขนาด:</span>
+                                        <span class="font-semibold">${archetype.size}</span>
+                                    </div>
+                                    <div class="flex justify-between text-sm">
+                                        <span class="text-gray-600">ราคา:</span>
+                                        <span class="font-semibold text-lg text-blue-600">${formatNumber(price)} ฿</span>
+                                    </div>
+                                    <div class="flex justify-between text-sm">
+                                        <span class="text-gray-600">เงินดาวน์ 20%:</span>
+                                        <span class="font-semibold text-orange-600">${formatNumber(downPayment)} ฿</span>
+                                    </div>
+                                </div>
+
+                                <div class="border-t pt-4 space-y-2">
+                                    <div class="flex justify-between text-sm">
+                                        <span class="text-gray-600">ความผันผวน:</span>
+                                        <span class="font-semibold ${
+                                            archetype.volatility === 'สูง' ? 'text-red-600' : 
+                                            archetype.volatility === 'ปานกลาง' ? 'text-yellow-600' : 'text-green-600'
+                                        }">
+                                            ${archetype.volatility}
+                                        </span>
+                                    </div>
+                                </div>
+
+                                <button ${!canAfford ? 'disabled' : ''}
+                                        class="w-full mt-4 font-bold py-3 rounded-lg ${
+                                            canAfford 
+                                                ? 'bg-blue-600 hover:bg-blue-700 text-white' 
+                                                : 'bg-gray-300 text-gray-500'
+                                        }">
+                                    ${canAfford ? 'ซื้อเลย!' : 'เงินไม่พอ'}
+                                </button>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+
+                <div class="bg-blue-500/20 border-2 border-blue-500 rounded-xl p-6 text-white">
+                    <h4 class="font-bold mb-2">📊 ข้อมูลตลาดย่าน ${district.name}:</h4>
+                    <div class="grid md:grid-cols-3 gap-4 text-sm">
+                        <div>
+                            <p class="text-gray-300">Entry Level:</p>
+                            <p class="text-2xl font-bold">${district.marketMix.type1}%</p>
+                        </div>
+                        <div>
+                            <p class="text-gray-300">Real Demand:</p>
+                            <p class="text-2xl font-bold">${district.marketMix.type2}%</p>
+                        </div>
+                        <div>
+                            <p class="text-gray-300">Prime:</p>
+                            <p class="text-2xl font-bold">${district.marketMix.type3}%</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function renderSimulation() {
+    const totalValue = gameState.portfolio.reduce((sum, p) => sum + p.currentValue, 0);
+    const totalInvested = gameState.portfolio.reduce((sum, p) => sum + p.purchasePrice * 0.2, 0);
+    const totalReturn = gameState.portfolio.reduce((sum, p) => sum + p.totalReturn, 0);
+    const totalEquity = totalValue * 0.2 + totalReturn;
+    const roi = totalInvested > 0 ? ((totalEquity - totalInvested) / totalInvested) * 100 : 0;
+
+    const currentEvent = gameState.events.find(e => e.year === gameState.currentYear);
+
+    return `
+        <div class="min-h-screen bg-gradient-to-br from-slate-900 to-slate-700 p-8 fade-in">
+            <div class="max-w-7xl mx-auto">
+                <div class="grid md:grid-cols-3 gap-6 mb-8">
+                    <div class="bg-white rounded-xl p-6">
+                        <p class="text-gray-600 mb-2">ปีที่</p>
+                        <p class="text-4xl font-bold text-gray-800">${gameState.currentYear}/10</p>
+                    </div>
+                    <div class="bg-white rounded-xl p-6">
+                        <p class="text-gray-600 mb-2">เงินสด</p>
+                        <p class="text-3xl font-bold text-gray-800">${formatNumber(gameState.cash)} ฿</p>
+                    </div>
+                    <div class="bg-white rounded-xl p-6">
+                        <p class="text-gray-600 mb-2">ROI</p>
+                        <p class="text-3xl font-bold ${roi >= 0 ? 'text-green-600' : 'text-red-600'}">
+                            ${roi.toFixed(1)}%
+                        </p>
+                    </div>
+                </div>
+
+                ${currentEvent ? `
+                    <div class="bg-orange-500/20 border-2 border-orange-500 rounded-xl p-6 mb-8">
+                        <h3 class="text-xl font-bold text-white mb-1">⚠️ เหตุการณ์ปีที่ ${gameState.currentYear}</h3>
+                        <p class="text-lg text-white">${currentEvent.name}</p>
+                    </div>
+                ` : ''}
+
+                <div class="bg-white rounded-xl p-6 mb-8">
+                    <h3 class="text-2xl font-bold text-gray-800 mb-4">📋 พอร์ตการลงทุน</h3>
+                    ${gameState.portfolio.map(prop => {
+                        const gain = prop.currentValue - prop.purchasePrice;
+                        const gainPercent = (gain / prop.purchasePrice) * 100;
+                        
+                        return `
+                            <div class="border-b pb-4 mb-4">
+                                <h4 class="text-lg font-bold text-gray-800">
+                                    ${prop.archetype.name} @ ${prop.district.name}
+                                </h4>
+                                <div class="grid grid-cols-3 gap-4 mt-2 text-sm">
+                                    <div>
+                                        <p class="text-gray-600">มูลค่าปัจจุบัน</p>
+                                        <p class="font-semibold">${formatNumber(prop.currentValue)} ฿</p>
+                                    </div>
+                                    <div>
+                                        <p class="text-gray-600">กำไร/ขาดทุน</p>
+                                        <p class="font-semibold ${gain >= 0 ? 'text-green-600' : 'text-red-600'}">
+                                            ${gain >= 0 ? '+' : ''}${formatNumber(gain)} ฿
+                                        </p>
+                                    </div>
+                                    <div>
+                                        <p class="text-gray-600">รายได้เช่า</p>
+                                        <p class="font-semibold text-blue-600">
+                                            +${formatNumber(prop.totalReturn)} ฿
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+
+                <div class="flex justify-center gap-4">
+                    ${gameState.currentYear < 10 ? `
+                        <button onclick="simulateYear()" 
+                                class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-8 rounded-lg text-xl">
+                            ⏭️ ปีถัดไป
+                        </button>
+                    ` : `
+                        <button onclick="simulateYear()" 
+                                class="bg-green-600 hover:bg-green-700 text-white font-bold py-4 px-8 rounded-lg text-xl">
+                            📊 ดูผลลัพธ์
+                        </button>
+                    `}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function renderResults() {
+    const totalValue = gameState.portfolio.reduce((sum, p) => sum + p.currentValue, 0);
+    const totalInvested = gameState.portfolio.reduce((sum, p) => sum + p.purchasePrice * 0.2, 0);
+    const totalReturn = gameState.portfolio.reduce((sum, p) => sum + p.totalReturn, 0);
+    const totalEquity = totalValue * 0.2 + totalReturn;
+    const roi = ((totalEquity - totalInvested) / totalInvested) * 100;
+
+    return `
+        <div class="min-h-screen bg-gradient-to-br from-slate-900 to-slate-700 p-8 fade-in">
+            <div class="max-w-5xl mx-auto">
+                <h1 class="text-5xl font-bold text-white text-center mb-4">
+                    🎯 สรุปผลการลงทุน 10 ปี
+                </h1>
+
+                <div class="bg-white rounded-2xl p-8 mb-8">
+                    <div class="grid md:grid-cols-2 gap-8">
+                        <div>
+                            <h3 class="text-xl font-bold text-gray-800 mb-4">💰 ผลลัพธ์ทางการเงิน</h3>
+                            <div class="space-y-3">
+                                <div class="flex justify-between">
+                                    <span>เงินลงทุนเริ่มต้น:</span>
+                                    <span class="font-bold">${formatNumber(totalInvested)} ฿</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span>มูลค่าทรัพย์สินปัจจุบัน:</span>
+                                    <span class="font-bold">${formatNumber(totalValue)} ฿</span>
+                                </div>
+                                <div class="flex justify-between">
+                                    <span>รายได้เช่าสะสม:</span>
+                                    <span class="font-bold text-blue-600">+${formatNumber(totalReturn)} ฿</span>
+                                </div>
+                                <div class="flex justify-between border-t-2 pt-3">
+                                    <span class="text-lg">ROI รวม:</span>
+                                    <span class="text-2xl font-bold ${roi >= 0 ? 'text-green-600' : 'text-red-600'}">
+                                        ${roi.toFixed(1)}%
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <h3 class="text-xl font-bold text-gray-800 mb-4">📊 พอร์ตสุดท้าย</h3>
+                            ${gameState.portfolio.map(prop => {
+                                const gain = ((prop.currentValue - prop.purchasePrice) / prop.purchasePrice) * 100;
+                                return `
+                                    <div class="mb-3 pb-3 border-b">
+                                        <p class="font-semibold">${prop.archetype.name} @ ${prop.district.name}</p>
+                                        <p class="text-sm ${gain >= 0 ? 'text-green-600' : 'text-red-600'}">
+                                            ${gain >= 0 ? '+' : ''}${gain.toFixed(1)}% Capital Gain
+                                        </p>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-blue-500/20 border-2 border-blue-500 rounded-xl p-6 mb-8 text-white">
+                    ${GAME_DATA.lessons.avgPriceWarning}
+                </div>
+
+                <div class="bg-purple-500/20 border-2 border-purple-500 rounded-xl p-6 mb-8 text-white">
+                    ${GAME_DATA.lessons.archetypeMatching}
+                </div>
+
+                <div class="bg-orange-500/20 border-2 border-orange-500 rounded-xl p-6 mb-8 text-white">
+                    ${GAME_DATA.lessons.kShapedRecovery}
+                </div>
+
+                <div class="flex justify-center">
+                    <button onclick="resetGame()" 
+                            class="bg-green-600 hover:bg-green-700 text-white font-bold py-4 px-8 rounded-lg text-xl">
+                        🔄 เล่นอีกครั้ง
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Main Render Function
+function render() {
+    const app = document.getElementById('app');
+    
+    switch(gameState.screen) {
+        case 'character-select':
+            app.innerHTML = renderCharacterSelect();
+            break;
+        case 'map-select':
+            app.innerHTML = renderMapSelect();
+            break;
+        case 'property-select':
+            app.innerHTML = renderPropertySelect();
+            break;
+        case 'simulation':
+            app.innerHTML = renderSimulation();
+            break;
+        case 'results':
+            app.innerHTML = renderResults();
+            break;
+    }
+}
+
+// Initial render
+render();
